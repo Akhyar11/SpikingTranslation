@@ -27,7 +27,7 @@ class StreamingCorpus:
     def decode(self, ids):
         return self.tokenizer.decode(ids)
         
-    def stream_batches(self, batch_size, limit, max_seq_len=64):
+    def stream_batches(self, batch_size, limit, max_seq_len=128):
         eos_id = self.get_eos_id()
         with open(self.src_path, 'r', encoding='utf-8') as src_file, \
              open(self.tgt_path, 'r', encoding='utf-8') as tgt_file:
