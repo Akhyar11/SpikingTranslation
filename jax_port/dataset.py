@@ -50,11 +50,22 @@ class StreamingCorpus:
                 lines_read += 1
                 
                 if len(sources) == batch_size:
-                    # Pad sequences to a STATIC max_seq_len for JAX JIT
+                    # Implement Shape Bucketing (16, 32, 48, 64, 80, 96, 112, 128)
+                    # Ini mencegah JAX kompilasi berulang kali tapi tetap hemat komputasi
+                    max_len_src = max(len(s) for s in sources)
+                    max_len_tgt = max(len(t) for t in targets)
+                    batch_max = max(max_len_src, max_len_tgt)
+                    
+                    bucket_len = max_seq_len
+                    for b in [16, 32, 48, 64, 80, 96, 112, 128]:
+                        if batch_max <= b:
+                            bucket_len = b
+                            break
+                            
                     pad_id = self.get_pad_id()
                     
-                    src_padded = np.array([s + [pad_id]*(max_seq_len - len(s)) for s in sources], dtype=np.int32)
-                    tgt_padded = np.array([t + [pad_id]*(max_seq_len - len(t)) for t in targets], dtype=np.int32)
+                    src_padded = np.array([s + [pad_id]*(bucket_len - len(s)) for s in sources], dtype=np.int32)
+                    tgt_padded = np.array([t + [pad_id]*(bucket_len - len(t)) for t in targets], dtype=np.int32)
                     
                     yield src_padded, tgt_padded
                     sources, targets = [], []
