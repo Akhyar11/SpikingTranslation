@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import functools
 from dataset import StreamingCorpus, SparseNGramMemory
 from snn_core import (
     encoder_step, stcm_encoder_step, stcm_decoder_step, decoder_step,
