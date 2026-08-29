@@ -57,30 +57,17 @@ fn debug_infer(
     let mut u_c_prev = Array1::zeros(stcm.w_cc.raw_dim()[0]);
     
     println!("---> FASE 1: ENCODER (Memasukkan token bahasa sumber ke SNN)");
+    let mut s_x = vec![Array1::zeros(encoder.w_e.raw_dim()[1]); k];
     for (t, &token) in src_seq.iter().enumerate() {
         println!("\n  Waktu ke-{} | Memproses Token ID: {} ('{}')", t, token, corpus.decode(&[token]).trim());
         
-        // 1. One-hot Input
-        let mut s_x = vec![Array1::zeros(encoder.w_e.raw_dim()[1]); k];
+        for tau in 0..k { s_x[tau].fill(0.0); }
         if token < s_x[0].len() {
             for tau in 0..k { s_x[tau][token] = 1.0; }
-            println!("  [s_x] Spike Input aktif di indeks {} selama K=20 timestep", token);
-        } else {
-            println!("  [s_x] WARNING: Token ID {} di luar jangkauan vocabulary encoder!", token);
         }
         
-        let (u_e, s_e) = encoder.forward_token(&s_x, &s_e_prev, &u_e_prev);
-        let (u_c, s_c) = stcm.forward_source_token(&s_e, &s_c_prev, &u_c_prev);
-        
-        print_stats("Encoder Output (u_e)", u_e.last().unwrap());
-        print_stats("Encoder Spikes (s_e)", s_e.last().unwrap());
-        print_stats("STCM Membran   (u_c)", u_c.last().unwrap());
-        print_stats("STCM Spikes    (s_c)", s_c.last().unwrap());
-        
-        s_e_prev = s_e;
-        u_e_prev = u_e.last().unwrap().clone();
-        s_c_prev = s_c;
-        u_c_prev = u_c.last().unwrap().clone();
+        encoder.forward_token_in_place(&s_x, &mut s_e_prev, &mut u_e_prev, None);
+        stcm.forward_source_token_in_place(&s_e_prev, &mut s_c_prev, &mut u_c_prev, None);
     }
     
     println!("\n---> FASE 2: DECODER (Menghasilkan terjemahan autoregresif)");
@@ -92,28 +79,24 @@ fn debug_infer(
     let mut current_token = 2; // <BOS> / <EOS> di BPE (index 2)
     println!("  Mulai Decoder dengan Token Awal: 2 (<BOS>)");
 
-    let vocab_tgt = decoder.w_y.raw_dim()[1];
-    let d_d = decoder.w_r.raw_dim()[0];
+    let mut s_y_prev = vec![Array1::zeros(decoder.w_y.raw_dim()[1]); k];
+    let mut result = Vec::new();
 
-    for t in 0..max_len {
-        println!("\n  --- Iterasi Decoder {} ---", t + 1);
-        println!("  Input ke Decoder (Dari kata sebelumnya): {} ('{}')", current_token, corpus.decode(&[current_token]).trim());
-        
-        let mut s_y_prev = vec![Array1::zeros(vocab_tgt); k];
-        if current_token < vocab_tgt {
+    for step in 0..max_len {
+        for tau in 0..k { s_y_prev[tau].fill(0.0); }
+        if current_token < s_y_prev[0].len() {
             for tau in 0..k { s_y_prev[tau][current_token] = 1.0; }
         }
         
-        let (u_ctx, s_ctx) = stcm.forward_decoder_token(&s_d_prev, &s_ctx_prev, &u_ctx_prev);
-        let (u_d, s_d) = decoder.forward_token(&s_y_prev, &s_ctx, &s_d_prev, &u_d_prev);
+        stcm.forward_decoder_token_in_place(&s_d_prev, &mut s_ctx_prev, &mut u_ctx_prev, None);
+        decoder.forward_token_in_place(&s_y_prev, &s_ctx_prev, &mut s_d_prev, &mut u_d_prev, None);
         
-        print_stats("STCM Context (u_ctx)", u_ctx.last().unwrap());
-        print_stats("Decoder Membran(u_d)", u_d.last().unwrap());
-        print_stats("Decoder Spikes (s_d)", s_d.last().unwrap());
+        let vocab_tgt = decoder.w_y.raw_dim()[1];
+        let d_d = decoder.w_r.raw_dim()[0];
 
         let mut neuron_s_sums = vec![0.0; d_d];
         for tau in 0..k {
-            for (i, val) in s_d[tau].iter().enumerate() {
+            for (i, val) in s_d_prev[tau].iter().enumerate() {
                 neuron_s_sums[i] += val;
             }
         }
@@ -126,47 +109,39 @@ fn debug_infer(
             }
         }
         
-        // Cari Top 3 Sebelum N-Gram
-        let mut sorted_scores: Vec<(usize, f32)> = token_scores.iter().enumerate().map(|(i, &s)| (i, s)).collect();
-        sorted_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        println!("  Top 3 SDR SNN murni:");
-        for i in 0..3 {
-            println!("    {}. '{}' (ID:{}) -> Score: {:.4}", i+1, corpus.decode(&[sorted_scores[i].0]).trim(), sorted_scores[i].0, sorted_scores[i].1);
-        }
-
-        // Apply NGram
+        println!("   [N-Gram Memory] Mencari pola untuk prev_tok='{}'", corpus.decode(&[current_token]));
         let candidates = ngram_memory.get_candidates(current_token);
-        if !candidates.is_empty() {
-            println!("  N-Gram menyarankan {} kandidat (Boost x2.0).", candidates.len());
-            for (tok, prob) in candidates {
-                if tok < token_scores.len() {
-                    token_scores[tok] += prob * 2.0;
-                }
-            }
-        } else {
-            println!("  N-Gram TIDAK memiliki saran untuk kata ini.");
+        
+        if candidates.is_empty() {
+            println!("      -> (Tidak ada catatan di memori N-Gram)");
         }
         
-        let mut best_token = 1;
+        for (tok, prob) in candidates {
+            if tok < token_scores.len() {
+                let boost = prob * 2.0;
+                token_scores[tok] += boost;
+                println!("      -> Kandidat '{}': prob {:.4} -> mendapat skor boost +{:.4}", corpus.decode(&[tok]), prob, boost);
+            }
+        }
+        
+        let mut best_token = 1; // <UNK>
         let mut max_score = f32::MIN;
         for (i, &s) in token_scores.iter().enumerate() {
             if i < 2 { continue; } 
+            
             if s > max_score {
                 max_score = s;
                 best_token = i;
             }
         }
         
-        println!("  >>> TERPILIH: '{}' (ID:{}) dengan skor akhir: {:.4}", corpus.decode(&[best_token]).trim(), best_token, max_score);
+        println!("   [Prediksi Terpilih] Kata ke-{} = '{}' (Skor Akhir: {:.4})", step + 1, corpus.decode(&[best_token]), max_score);
         
+        result.push(best_token);
         current_token = best_token;
-        s_ctx_prev = s_ctx;
-        u_ctx_prev = u_ctx.last().unwrap().clone();
-        s_d_prev = s_d;
-        u_d_prev = u_d.last().unwrap().clone();
         
         if current_token == 2 {
-            println!("  [Mencapai Token EOS]");
+            println!("   [Selesai] Token <EOS> dihasilkan.");
             break;
         }
     }

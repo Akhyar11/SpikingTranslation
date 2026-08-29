@@ -21,19 +21,16 @@ pub fn infer(
     // Tidak ada parameter last_s_c di forward_decoder_token,
     // kita hanya melacak u dan s.
     
+    let mut s_x = vec![Array1::zeros(encoder.w_e.raw_dim()[1]); k];
+    
     for &token in src_seq {
-        let mut s_x = vec![Array1::zeros(encoder.w_e.raw_dim()[1]); k];
+        for tau in 0..k { s_x[tau].fill(0.0); }
         if token < s_x[0].len() {
             for tau in 0..k { s_x[tau][token] = 1.0; }
         }
         
-        let (u_e, s_e) = encoder.forward_token(&s_x, &s_e_prev, &u_e_prev);
-        let (u_c, s_c) = stcm.forward_source_token(&s_e, &s_c_prev, &u_c_prev);
-        
-        s_e_prev = s_e;
-        u_e_prev = u_e.last().unwrap().clone();
-        s_c_prev = s_c;
-        u_c_prev = u_c.last().unwrap().clone();
+        encoder.forward_token_in_place(&s_x, &mut s_e_prev, &mut u_e_prev, None);
+        stcm.forward_source_token_in_place(&s_e_prev, &mut s_c_prev, &mut u_c_prev, None);
     }
     
     // 2. Decode Autoregressively
@@ -45,15 +42,16 @@ pub fn infer(
     let mut result = Vec::new();
     let mut current_token = 2; // Asumsi <EOS> atau <BOS>
     
+    let mut s_y_prev = vec![Array1::zeros(decoder.w_y.raw_dim()[1]); k];
+    
     for _ in 0..max_len {
-        let mut s_y_prev = vec![Array1::zeros(decoder.w_y.raw_dim()[1]); k];
+        for tau in 0..k { s_y_prev[tau].fill(0.0); }
         if current_token < s_y_prev[0].len() {
             for tau in 0..k { s_y_prev[tau][current_token] = 1.0; }
         }
         
-        // forward_decoder_token hanya menerima 3 argumen: s_d_prev_t, s_ctx_prev_t, u_prev_k
-        let (u_ctx, s_ctx) = stcm.forward_decoder_token(&s_d_prev, &s_ctx_prev, &u_ctx_prev);
-        let (u_d, s_d) = decoder.forward_token(&s_y_prev, &s_ctx, &s_d_prev, &u_d_prev);
+        stcm.forward_decoder_token_in_place(&s_d_prev, &mut s_ctx_prev, &mut u_ctx_prev, None);
+        decoder.forward_token_in_place(&s_y_prev, &s_ctx_prev, &mut s_d_prev, &mut u_d_prev, None);
         
         // Prediksi token menggunakan akumulasi spike membran (s_d) dan pemetaan SDR
         let vocab_tgt = decoder.w_y.raw_dim()[1];
@@ -61,7 +59,7 @@ pub fn infer(
 
         let mut neuron_s_sums = vec![0.0; d_d];
         for tau in 0..k {
-            for (i, val) in s_d[tau].iter().enumerate() {
+            for (i, val) in s_d_prev[tau].iter().enumerate() {
                 neuron_s_sums[i] += val;
             }
         }
@@ -99,11 +97,6 @@ pub fn infer(
         
         result.push(best_token);
         current_token = best_token;
-        
-        s_ctx_prev = s_ctx;
-        u_ctx_prev = u_ctx.last().unwrap().clone();
-        s_d_prev = s_d;
-        u_d_prev = u_d.last().unwrap().clone();
         
         if current_token == 2 { // <EOS>
             break;

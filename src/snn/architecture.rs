@@ -44,35 +44,28 @@ impl SpikingEncoder {
     }
 
     /// Forward pass untuk satu token penuh (melalui K neural timesteps).
-    pub fn forward_token(
+    pub fn forward_token_in_place(
         &self,
-        s_x_t: &[Array1<f32>],     // [K] array of input spikes
-        s_prev_t: &[Array1<f32>],  // [K] array of recurrent spikes dari token sebelumnya
-        u_prev_k: &Array1<f32>,    // State membran dari akhir token sebelumnya
-    ) -> (Vec<Array1<f32>>, Vec<Array1<f32>>) {
+        s_x_t: &[Array1<f32>],
+        s_prev_t: &mut [Array1<f32>],
+        u_prev_k: &mut Array1<f32>,
+        mut u_history_out: Option<&mut [Array1<f32>]>,
+    ) {
         let k = s_x_t.len();
-        let mut s_history = Vec::with_capacity(k);
-        let mut u_history = Vec::with_capacity(k);
-
-        // Boundary continuity (t, 0) <- (t-1, K)
-        let mut u_current = u_prev_k * self.beta_seq;
+        let mut u_current = u_prev_k.clone() * self.beta_seq;
         let mut s_current = Array1::zeros(u_prev_k.raw_dim());
 
         for tau in 0..k {
-            // I_e,t^tau = W_e * S_x_t^tau + W_r * S_e,t-1^tau
             let i_e = sparse_addition(&self.w_e, &s_x_t[tau]) + sparse_addition(&self.w_r, &s_prev_t[tau]);
-            
-            // U_e,t^tau = beta * U_e,t^{tau-1} + I - threshold * S^{tau-1}
             u_current = &u_current * self.lif_params.beta + &i_e - &s_current * self.lif_params.threshold;
-            
-            // S_e,t^tau = H(U - threshold)
             s_current = u_current.mapv(|u| if u >= self.lif_params.threshold { 1.0 } else { 0.0 });
             
-            u_history.push(u_current.clone());
-            s_history.push(s_current.clone());
+            if let Some(ref mut hist) = u_history_out {
+                hist[tau].assign(&u_current);
+            }
+            s_prev_t[tau].assign(&s_current);
         }
-
-        (u_history, s_history)
+        u_prev_k.assign(&u_current);
     }
 }
 
@@ -92,17 +85,15 @@ impl STCM {
     }
 
     /// B. STCM (Source-side Context Building)
-    pub fn forward_source_token(
+    pub fn forward_source_token_in_place(
         &self,
         s_e_t: &[Array1<f32>],
-        s_c_prev_t: &[Array1<f32>],
-        u_prev_k: &Array1<f32>,
-    ) -> (Vec<Array1<f32>>, Vec<Array1<f32>>) {
+        s_c_prev_t: &mut [Array1<f32>],
+        u_prev_k: &mut Array1<f32>,
+        mut u_history_out: Option<&mut [Array1<f32>]>,
+    ) {
         let k = s_e_t.len();
-        let mut s_history = Vec::with_capacity(k);
-        let mut u_history = Vec::with_capacity(k);
-
-        let mut u_current = u_prev_k * self.beta_seq;
+        let mut u_current = u_prev_k.clone() * self.beta_seq;
         let mut s_current = Array1::zeros(u_prev_k.raw_dim());
 
         for tau in 0..k {
@@ -110,24 +101,24 @@ impl STCM {
             u_current = &u_current * self.lif_params.beta + &i_c - &s_current * self.lif_params.threshold;
             s_current = u_current.mapv(|u| if u >= self.lif_params.threshold { 1.0 } else { 0.0 });
             
-            u_history.push(u_current.clone());
-            s_history.push(s_current.clone());
+            if let Some(ref mut hist) = u_history_out {
+                hist[tau].assign(&u_current);
+            }
+            s_c_prev_t[tau].assign(&s_current);
         }
-        (u_history, s_history)
+        u_prev_k.assign(&u_current);
     }
 
     /// C. STCM (Decoder-side Dynamic Context)
-    pub fn forward_decoder_token(
+    pub fn forward_decoder_token_in_place(
         &self,
         s_d_prev_t: &[Array1<f32>],
-        s_ctx_prev_t: &[Array1<f32>],
-        u_prev_k: &Array1<f32>,
-    ) -> (Vec<Array1<f32>>, Vec<Array1<f32>>) {
+        s_ctx_prev_t: &mut [Array1<f32>],
+        u_prev_k: &mut Array1<f32>,
+        mut u_history_out: Option<&mut [Array1<f32>]>,
+    ) {
         let k = s_d_prev_t.len();
-        let mut s_history = Vec::with_capacity(k);
-        let mut u_history = Vec::with_capacity(k);
-
-        let mut u_current = u_prev_k * self.beta_seq;
+        let mut u_current = u_prev_k.clone() * self.beta_seq;
         let mut s_current = Array1::zeros(u_prev_k.raw_dim());
 
         for tau in 0..k {
@@ -135,10 +126,12 @@ impl STCM {
             u_current = &u_current * self.lif_params.beta + &i_ctx - &s_current * self.lif_params.threshold;
             s_current = u_current.mapv(|u| if u >= self.lif_params.threshold { 1.0 } else { 0.0 });
             
-            u_history.push(u_current.clone());
-            s_history.push(s_current.clone());
+            if let Some(ref mut hist) = u_history_out {
+                hist[tau].assign(&u_current);
+            }
+            s_ctx_prev_t[tau].assign(&s_current);
         }
-        (u_history, s_history)
+        u_prev_k.assign(&u_current);
     }
 }
 
@@ -156,18 +149,16 @@ impl SpikingDecoder {
         Self { w_y, w_c, w_r, lif_params, beta_seq }
     }
 
-    pub fn forward_token(
+    pub fn forward_token_in_place(
         &self,
         s_y_prev_t: &[Array1<f32>],
         s_ctx_t: &[Array1<f32>],
-        s_d_prev_t: &[Array1<f32>],
-        u_prev_k: &Array1<f32>,
-    ) -> (Vec<Array1<f32>>, Vec<Array1<f32>>) {
+        s_d_prev_t: &mut [Array1<f32>],
+        u_prev_k: &mut Array1<f32>,
+        mut u_history_out: Option<&mut [Array1<f32>]>,
+    ) {
         let k = s_ctx_t.len();
-        let mut s_history = Vec::with_capacity(k);
-        let mut u_history = Vec::with_capacity(k);
-
-        let mut u_current = u_prev_k * self.beta_seq;
+        let mut u_current = u_prev_k.clone() * self.beta_seq;
         let mut s_current = Array1::zeros(u_prev_k.raw_dim());
 
         for tau in 0..k {
@@ -175,10 +166,12 @@ impl SpikingDecoder {
             u_current = &u_current * self.lif_params.beta + &i_d - &s_current * self.lif_params.threshold;
             s_current = u_current.mapv(|u| if u >= self.lif_params.threshold { 1.0 } else { 0.0 });
             
-            u_history.push(u_current.clone());
-            s_history.push(s_current.clone());
+            if let Some(ref mut hist) = u_history_out {
+                hist[tau].assign(&u_current);
+            }
+            s_d_prev_t[tau].assign(&s_current);
         }
-        (u_history, s_history)
+        u_prev_k.assign(&u_current);
     }
 }
 
@@ -238,35 +231,31 @@ mod tests {
         );
 
         // Dummy data
-        let s_x = vec![Array1::zeros(d_in); k];
-        let s_e_prev = vec![Array1::zeros(d_e); k];
-        let u_e_prev = Array1::zeros(d_e);
+        let mut s_x = vec![Array1::zeros(d_in); k];
+        let mut s_e_prev = vec![Array1::zeros(d_e); k];
+        let mut u_e_prev = Array1::zeros(d_e);
+        let mut u_e_hist = vec![Array1::zeros(d_e); k];
 
         // Encoder Forward
-        let (u_e, s_e) = encoder.forward_token(&s_x, &s_e_prev, &u_e_prev);
-        assert_eq!(s_e.len(), k);
-        assert_eq!(s_e[0].len(), d_e);
+        encoder.forward_token_in_place(&s_x, &mut s_e_prev, &mut u_e_prev, Some(&mut u_e_hist));
 
         // STCM Source Forward
-        let s_c_prev = vec![Array1::zeros(d_c); k];
-        let u_c_prev = Array1::zeros(d_c);
-        let (u_c, s_c) = stcm.forward_source_token(&s_e, &s_c_prev, &u_c_prev);
-        assert_eq!(s_c.len(), k);
-        assert_eq!(s_c[0].len(), d_c);
+        let mut s_c_prev = vec![Array1::zeros(d_c); k];
+        let mut u_c_prev = Array1::zeros(d_c);
+        let mut u_c_hist = vec![Array1::zeros(d_c); k];
+        stcm.forward_source_token_in_place(&s_e_prev, &mut s_c_prev, &mut u_c_prev, Some(&mut u_c_hist));
 
         // STCM Decoder Forward
-        let s_d_prev = vec![Array1::zeros(d_d); k];
-        let s_ctx_prev = vec![Array1::zeros(d_c); k]; // dari S_c_T_x
-        let u_ctx_prev = Array1::zeros(d_c);
-        let (u_ctx, s_ctx) = stcm.forward_decoder_token(&s_d_prev, &s_ctx_prev, &u_ctx_prev);
-        assert_eq!(s_ctx.len(), k);
-        assert_eq!(s_ctx[0].len(), d_c);
+        let mut s_d_prev = vec![Array1::zeros(d_d); k];
+        let mut s_ctx_prev = vec![Array1::zeros(d_c); k]; // dari S_c_T_x
+        let mut u_ctx_prev = Array1::zeros(d_c);
+        let mut u_ctx_hist = vec![Array1::zeros(d_c); k];
+        stcm.forward_decoder_token_in_place(&s_d_prev, &mut s_ctx_prev, &mut u_ctx_prev, Some(&mut u_ctx_hist));
 
         // Decoder Forward
-        let s_y_prev = vec![Array1::zeros(d_in); k];
-        let u_d_prev = Array1::zeros(d_d);
-        let (u_d, s_d) = decoder.forward_token(&s_y_prev, &s_ctx, &s_d_prev, &u_d_prev);
-        assert_eq!(s_d.len(), k);
-        assert_eq!(s_d[0].len(), d_d);
+        let mut s_y_prev = vec![Array1::zeros(d_in); k];
+        let mut u_d_prev = Array1::zeros(d_d);
+        let mut u_d_hist = vec![Array1::zeros(d_d); k];
+        decoder.forward_token_in_place(&s_y_prev, &s_ctx_prev, &mut s_d_prev, &mut u_d_prev, Some(&mut u_d_hist));
     }
 }

@@ -43,52 +43,55 @@ pub fn compute_sequence_gradients(
     let mut u_e_prev = Array1::zeros(encoder.w_e.raw_dim()[0]);
     let mut s_c_prev = vec![Array1::zeros(stcm.w_cc.raw_dim()[0]); k];
     let mut u_c_prev = Array1::zeros(stcm.w_cc.raw_dim()[0]);
+    let mut s_x = vec![Array1::zeros(encoder.w_e.raw_dim()[1]); k];
     
     for &token in src {
-        let mut s_x = vec![Array1::zeros(encoder.w_e.raw_dim()[1]); k];
-        if token < s_x[0].len() { s_x[0][token] = 1.0; }
+        // Reset s_x efficiently
+        for tau in 0..k { s_x[tau].fill(0.0); }
+        if token < s_x[0].len() { 
+            for tau in 0..k { s_x[tau][token] = 1.0; }
+        }
         
-        let (u_e, s_e) = encoder.forward_token(&s_x, &s_e_prev, &u_e_prev);
-        let (u_c, s_c) = stcm.forward_source_token(&s_e, &s_c_prev, &u_c_prev);
-        
-        s_e_prev = s_e;
-        u_e_prev = u_e.last().unwrap().clone();
-        s_c_prev = s_c;
-        u_c_prev = u_c.last().unwrap().clone();
+        encoder.forward_token_in_place(&s_x, &mut s_e_prev, &mut u_e_prev, None);
+        stcm.forward_source_token_in_place(&s_e_prev, &mut s_c_prev, &mut u_c_prev, None);
     }
     
     // --- 2. DECODER FORWARD PASS ---
     let mut s_ctx_prev = s_c_prev;
     let mut u_ctx_prev = u_c_prev;
     
-    let mut loss_gradients = Vec::new();
-    let mut u_histories = Vec::new();
-    let mut s_y_histories = Vec::new();
-    let mut s_d_histories = Vec::new();
-    let mut s_ctx_histories = Vec::new();
+    let mut loss_gradients = Vec::with_capacity(seq_length);
+    let mut u_histories = Vec::with_capacity(seq_length);
+    let mut s_y_histories = Vec::with_capacity(seq_length);
+    let mut s_d_histories = Vec::with_capacity(seq_length);
+    let mut s_ctx_histories = Vec::with_capacity(seq_length);
+    
+    let mut s_y = vec![Array1::<f32>::zeros(d_in); k];
+    let mut u_d_hist = vec![Array1::<f32>::zeros(d_d); k];
 
     for t in 0..seq_length {
         let prev_token = if t == 0 { 2 } else { tgt[t-1] }; // 2 = BOS/EOS
-        let mut s_y = vec![Array1::<f32>::zeros(d_in); k];
+        for tau in 0..k { s_y[tau].fill(0.0); }
         if prev_token < d_in {
             for tau in 0..k { s_y[tau][prev_token] = 1.0; }
         }
         
-        let (u_ctx, s_ctx) = stcm.forward_decoder_token(&s_d_prev, &s_ctx_prev, &u_ctx_prev);
-        let (u_d, s_d) = decoder.forward_token(&s_y, &s_ctx, &s_d_prev, &u_d_prev);
-        let (loss_val, dl_ds) = margin_spike_loss(&s_d, tgt[t], c_t, token_map, 2.0);
+        // Simpan s_d_prev dan s_ctx_prev SEBELUM di-mutate in-place
+        s_d_histories.push(s_d_prev.clone());
+        
+        stcm.forward_decoder_token_in_place(&s_d_prev, &mut s_ctx_prev, &mut u_ctx_prev, None);
+        
+        // Simpan s_ctx_prev SETELAH di-mutate (menjadi s_ctx_t)
+        s_ctx_histories.push(s_ctx_prev.clone());
+        
+        decoder.forward_token_in_place(&s_y, &s_ctx_prev, &mut s_d_prev, &mut u_d_prev, Some(&mut u_d_hist));
+        
+        let (loss_val, dl_ds) = margin_spike_loss(&s_d_prev, tgt[t], c_t, token_map, 2.0);
         total_loss += loss_val;
         
-        u_histories.push(u_d.clone());
-        s_y_histories.push(s_y);
-        s_d_histories.push(s_d_prev.clone());
-        s_ctx_histories.push(s_ctx.clone());
+        u_histories.push(u_d_hist.clone());
+        s_y_histories.push(s_y.clone());
         loss_gradients.push(dl_ds);
-        
-        u_d_prev = u_d.last().unwrap().clone();
-        s_d_prev = s_d.clone();
-        s_ctx_prev = s_ctx;
-        u_ctx_prev = u_ctx.last().unwrap().clone();
     }
 
     let mut delta_next_k = Array1::<f32>::zeros(d_d);
