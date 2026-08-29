@@ -3,3 +3,4 @@ jaxlib
 tokenizers
 numpy
 tqdm
+sacrebleu==2.4.0
