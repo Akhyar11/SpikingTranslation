@@ -11,7 +11,7 @@ from infer import infer # Reuse the autoregressive decoding from infer.py
 d_d = 128
 num_active_sdr = 3
 
-def read_test_set(src_path, tgt_path, start_line=74000, end_line=75000):
+def read_test_set(src_path, tgt_path, start_line=99000, end_line=100000):
     src_lines = []
     tgt_lines = []
     with open(src_path, 'r', encoding='utf-8') as f_src, open(tgt_path, 'r', encoding='utf-8') as f_tgt:
@@ -85,7 +85,7 @@ def main():
     vocab_tgt = corpus.vocab_size()
     
     print("Memuat dataset test (1000 kalimat)...")
-    src_texts, tgt_refs = read_test_set(src_path, tgt_path, start_line=74000, end_line=75000)
+    src_texts, tgt_refs = read_test_set(src_path, tgt_path, start_line=99000, end_line=100000)
     
     print("Memuat Checkpoint Model SNN...")
     try:
@@ -99,7 +99,7 @@ def main():
     
     print("Membangun N-Gram Memory untuk RQ2...")
     ngram = SparseNGramMemory()
-    ngram.build_from_corpus(corpus, 74000) # Hanya dari train set
+    ngram.build_from_corpus(corpus, 99000) # Hanya dari train set
     
     # RQ1: SNN Baseline
     res_snn = evaluate_model("SNN (~1M Params)", params, corpus, src_texts, tgt_refs, m_v_all, None)
