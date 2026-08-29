@@ -6,11 +6,12 @@ from snn_core import precompute_all_sdr
 from train import init_params, forward_pass, d_d, num_active_sdr
 from infer import infer
 import functools
+import time
 
-epochs = 300
-max_samples = 20
-batch_size = 20
-learning_rate = 0.01
+epochs = 10
+max_samples = 100
+batch_size = 10
+learning_rate = 0.005
 
 @functools.partial(jax.pmap, axis_name='batch', in_axes=(0, 0, 0, None, 0, 0, None))
 def update_adam(params, src_batch, tgt_batch, m_v_all, m, v, t):
@@ -24,6 +25,7 @@ def update_adam(params, src_batch, tgt_batch, m_v_all, m, v, t):
     eps = 1e-8
     
     def apply_adam(p, g, m_i, v_i):
+        g = jnp.clip(g, -1.0, 1.0)
         m_new = beta1 * m_i + (1 - beta1) * g
         v_new = beta2 * v_i + (1 - beta2) * jnp.square(g)
         m_hat = m_new / (1 - beta1 ** t)
@@ -60,36 +62,77 @@ def main():
     m = jax.tree_util.tree_map(lambda x: jnp.stack([x] * num_devices), m)
     v = jax.tree_util.tree_map(lambda x: jnp.stack([x] * num_devices), v)
     
+    # Calculate Total vs Active Parameters
+    total_params = sum(x[0].size for x in jax.tree_util.tree_leaves(params))
+    # Active Params: Total params minus (E-1)*Expert Params
+    from train import num_experts
+    expert_params_per_expert = (params['exp_w1'][0].size + params['exp_w2'][0].size + 
+                                params['exp1_g'][0].size + params['exp1_b'][0].size +
+                                params['exp2_g'][0].size + params['exp2_b'][0].size) // num_experts
+    active_params = total_params - (num_experts - 1) * expert_params_per_expert
+    
+    print(f"\n[Spiking-MoE Parameters]")
+    print(f"Total Parameters : {total_params:,}")
+    print(f"Active Parameters: {active_params:,} ({(active_params/total_params)*100:.1f}%)")
+    print(f"Number of Experts: {num_experts}")
+    print("-" * 30 + "\n")
+    
     m_v_all = precompute_all_sdr(vocab_tgt, d_d, num_active_sdr)
     
+    global_step = 0
+    for epoch in range(1, epochs + 1):
+        batch_iter = corpus.stream_batches(batch_size, max_samples, max_seq_len=20)
+        epoch_loss = 0.0
+        steps = 0
+        
+        for src_batch_full, tgt_batch_full in batch_iter:
+            src_batch = src_batch_full.reshape(num_devices, batch_size // num_devices, -1)
+            tgt_batch = tgt_batch_full.reshape(num_devices, batch_size // num_devices, -1)
+            
+            global_step += 1
+            steps += 1
+            t = jnp.array([global_step] * num_devices, dtype=jnp.float32)
+            params, loss, m, v = update_adam(params, src_batch, tgt_batch, m_v_all, m, v, t)
+            epoch_loss += float(jnp.mean(loss))
+            
+        print(f"Epoch {epoch:3d}/{epochs} | Avg Loss = {epoch_loss / steps:.4f}")
+            
+    print("\nTraining selesai. Melakukan inferensi pada 5 data latih pertama (Overfit Test)...")
+    
+    # Ambil ulang 1 batch pertama untuk inferensi
     batch_iter = corpus.stream_batches(batch_size, max_samples, max_seq_len=20)
     src_batch_full, tgt_batch_full = next(batch_iter)
-    
-    for epoch in range(1, epochs + 1):
-        src_batch = src_batch_full.reshape(num_devices, batch_size // num_devices, -1)
-        tgt_batch = tgt_batch_full.reshape(num_devices, batch_size // num_devices, -1)
-        
-        t = jnp.array([epoch] * num_devices, dtype=jnp.float32)
-        params, loss, m, v = update_adam(params, src_batch, tgt_batch, m_v_all, m, v, t)
-        
-        if epoch % 10 == 0 or epoch == 1:
-            print(f"Epoch {epoch:3d}/{epochs} | Loss = {float(jnp.mean(loss)):.4f}")
-            if float(jnp.mean(loss)) < 0.1:
-                print("Loss sudah sangat kecil, early stopping!")
-                break
-            
-    print("\nTraining selesai. Melakukan inferensi pada data latih (Overfit Test)...")
     
     saved_params = jax.tree_util.tree_map(lambda x: x[0], params)
     
     gen_len = tgt_batch_full.shape[1]
-    out_ids = infer(saved_params, jnp.array(src_batch_full), max_len=gen_len, m_v_all=m_v_all, ngram_mem=None)
+    
+    start_time = time.time()
+    out_ids, expert_ids = infer(saved_params, jnp.array(src_batch_full), max_len=gen_len, m_v_all=m_v_all)
+    end_time = time.time()
+    
     out_ids = np.array(out_ids)
+    expert_ids = np.array(expert_ids)
+    
+    latency = end_time - start_time
+    total_tokens_generated = batch_size * gen_len
+    ms_per_token = (latency / total_tokens_generated) * 1000
+    
+    print(f"[Latency] {ms_per_token:.2f} ms/token (Total time: {latency:.2f}s for {total_tokens_generated} tokens)")
+    
+    # Histogram utilization
+    valid_expert_mask = (src_batch_full != 0)
+    valid_expert_ids = expert_ids[valid_expert_mask]
+    hist = np.bincount(valid_expert_ids.flatten(), minlength=num_experts)
+    print(f"[Router Histogram] Expert Load Distribution: {hist}")
     
     eos_id = corpus.get_eos_id()
     pad_id = corpus.get_pad_id()
     
-    for b in range(5):
+    exact_matches = 0
+    total_samples = batch_size
+    
+    for b in range(min(5, batch_size)):
         src_seq = src_batch_full[b].tolist()
         src_text = corpus.decode([x for x in src_seq if x not in (pad_id, eos_id)])
         
@@ -104,6 +147,11 @@ def main():
         print(f"\n[{b+1}] Source : {src_text}")
         print(f"    Target : {tgt_text}")
         print(f"    Predik : {pred_text}")
+        
+        if tgt_text.strip() == pred_text.strip():
+            exact_matches += 1
+            
+    print(f"\n[Accuracy] Exact Sequence Match: {exact_matches}/{total_samples} ({(exact_matches/total_samples)*100:.1f}%)")
 
 if __name__ == "__main__":
     main()

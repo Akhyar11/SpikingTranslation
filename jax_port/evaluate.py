@@ -4,7 +4,7 @@ import numpy as np
 import time
 import sacrebleu
 from tqdm import tqdm
-from dataset import StreamingCorpus, SparseNGramMemory
+from dataset import StreamingCorpus
 from snn_core import precompute_all_sdr
 from infer import infer # Reuse the autoregressive decoding from infer.py
 
@@ -23,7 +23,7 @@ def read_test_set(src_path, tgt_path, start_line=99000, end_line=100000):
                 break
     return src_lines, tgt_lines
 
-def evaluate_model(model_name, params, corpus, src_texts, refs, m_v_all, ngram_mem, batch_size=32):
+def evaluate_model(model_name, params, corpus, src_texts, refs, m_v_all, batch_size=32):
     print(f"\nMenjalankan Evaluasi: {model_name}")
     predictions = []
     
@@ -45,7 +45,7 @@ def evaluate_model(model_name, params, corpus, src_texts, refs, m_v_all, ngram_m
         
         # Inference (assume max generated len is 64)
         gen_len = 64
-        out_ids = infer(params, jnp.array(src_padded), max_len=gen_len, m_v_all=m_v_all, ngram_mem=ngram_mem)
+        out_ids = infer(params, jnp.array(src_padded), max_len=gen_len, m_v_all=m_v_all)
         out_ids = np.array(out_ids)
         
         for b in range(len(batch_texts)):
@@ -97,15 +97,8 @@ def main():
         
     m_v_all = precompute_all_sdr(vocab_tgt, d_d, num_active_sdr)
     
-    print("Membangun N-Gram Memory untuk RQ2...")
-    ngram = SparseNGramMemory()
-    ngram.build_from_corpus(corpus, 99000) # Hanya dari train set
-    
     # RQ1: SNN Baseline
-    res_snn = evaluate_model("SNN (~1M Params)", params, corpus, src_texts, tgt_refs, m_v_all, None)
-    
-    # RQ2: SNN + N-Gram
-    res_ngram = evaluate_model("SNN + N-Gram", params, corpus, src_texts, tgt_refs, m_v_all, ngram)
+    res_snn = evaluate_model("Spiking-MoE", params, corpus, src_texts, tgt_refs, m_v_all)
     
     # Print Markdown Table for Paper
     print("\n\n" + "="*50)
@@ -113,13 +106,11 @@ def main():
     print("="*50)
     print("\n| Model        | BLEU | chrF | Tok/s | Latency (ms) |")
     print("| ------------ | ---: | ---: | ----: | -----------: |")
-    for res in [res_snn, res_ngram]:
+    for res in [res_snn]:
         print(f"| {res['Model']:<17} | {res['BLEU']:5.2f} | {res['chrF']:5.2f} | {res['Tok/s']:5.1f} | {res['Latency']:5.1f} |")
         
     print("\nKesimpulan RQ:")
-    print("RQ1 Terjawab: Lihat baris pertama (SNN) apakah BLEU > 0.")
-    print("RQ2 Terjawab: Bandingkan BLEU SNN vs SNN+N-Gram.")
-    print("RQ3 Terjawab: Bandingkan Tok/s dan Latency kedua model.")
+    print("SNN MoE Evaluated.")
 
 if __name__ == "__main__":
     main()

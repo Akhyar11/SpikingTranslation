@@ -8,33 +8,33 @@ Ya. Saya akan sederhanakan menjadi **satu hipotesis utama dengan 3 RQ**, tetapi 
 
 # 1. Research Objective
 
-Penelitian ini bertujuan menginvestigasi apakah **fully spiking Seq2Seq dengan sekitar 1M trainable parameters** dapat digunakan untuk machine translation, dan apakah **sparse N-gram memory** dapat meningkatkan kapasitas translation tanpa memperbesar neural parameter secara signifikan.
+Penelitian ini bertujuan menginvestigasi apakah **fully spiking Seq2Seq** dapat digunakan untuk machine translation, dan apakah arsitektur **Spiking Mixture-of-Experts (Spiking-MoE)** dengan **Temporal Spiking Router** dapat meningkatkan kapasitas model (scaling parameters) secara signifikan tanpa menaikkan latensi aktif (*active computation*) secara linear.
 
 Konsep dasarnya:
 
 $$
 \boxed{
-\text{Small Fully-Spiking Neural Core}
+\text{Small Active Spiking Neural Core}
 +
-\text{Large Sparse N-gram Memory}
+\text{Large Sparse Spiking Experts}
 }
 $$
 
-Neural core menangani:
+Neural core (Encoder, STCM, Decoder) menangani:
 
 $$
 \text{temporal representation}
 +
-\text{sequence transformation}
+\text{sequence tracking}
 $$
 
-sedangkan N-gram memory menyediakan:
+sedangkan kumpulan Pakar (Sparse Experts) menangani:
 
 $$
-\text{lexical/contextual retrieval}
+\text{specialized feature extraction}
 $$
 
-Dengan demikian kapasitas sistem tidak seluruhnya harus disimpan dalam parameter neural.
+Dengan demikian kapasitas sistem dapat ditingkatkan secara masif (skala parameter besar) dengan biaya komputasi yang tetap rendah karena hanya sebagian parameter (pakar terpilih) yang dieksekusi pada setiap langkah waktu.
 
 ---
 
@@ -44,52 +44,47 @@ Penelitian dibatasi menjadi tiga pertanyaan.
 
 ### RQ1 — Spiking Seq2Seq Capability
 
-> **Can a fully spiking Seq2Seq model with approximately 1M trainable parameters perform effective machine translation?**
+> **Can a fully spiking Seq2Seq model (without any dense Softmax operations) perform effective machine translation and converge rapidly using SNN Layer Normalization (tdBN)?**
 
 Tujuan:
 
-Menguji apakah model SNN kecil dapat melakukan translation tanpa bergantung pada dense neural output seperti Softmax.
+Menguji kelayakan model *baseline SNN* dalam mempelajari pemetaan terjemahan kompleks secara stabil dan cepat (mengatasi limitasi *surrogate gradient vanishing*).
 
 ---
 
-### RQ2 — N-gram Memory
+### RQ2 — Spiking-MoE Scaling & Specialization
 
-> **Does sparse N-gram memory improve the translation performance of a parameter-efficient fully spiking Seq2Seq model?**
+> **Does the integration of a Sparse Mixture-of-Experts (Spiking-MoE) driven by a Temporal Spiking Router improve translation capacity compared to a dense baseline?**
 
 Eksperimen utama:
 
 $$
-\boxed{SNN}
+\boxed{Dense\ SNN}
 $$
 
 vs.
 
 $$
-\boxed{SNN+N\text{-}gram}
+\boxed{Spiking\text{-}MoE}
 $$
 
-Parameter neural kedua model dibuat hampir sama.
-
-Dengan demikian peningkatan performa dapat dikaitkan dengan external memory, bukan peningkatan model capacity.
+Dengan *Active Parameters* kedua model dibuat sama, namun Spiking-MoE memiliki total parameter yang jauh lebih besar karena jumlah pakar ($E$). 
+Tujuan RQ ini adalah memvalidasi apakah mekanisme *dynamic routing* menggunakan *spike accumulation* (tanpa *softmax*) dapat secara efektif membagi beban (load-balancing) dan menspesialisasikan representasi fitur.
 
 ---
 
 ### RQ3 — Computational Efficiency
 
-> **What is the trade-off between translation quality and computational efficiency of the proposed memory-augmented SNN?**
+> **What is the trade-off between translation quality, parameter scale (total vs active parameters), and computational efficiency (spike rate, latency) of the proposed Spiking-MoE?**
 
 Evaluasi:
 
 $$
-BLEU
+BLEU\ /\ chrF
 $$
 
 $$
-chrF
-$$
-
-$$
-Parameters
+Total\ Parameters\ vs.\ Active\ Parameters
 $$
 
 $$
@@ -97,11 +92,7 @@ Latency/token
 $$
 
 $$
-Tokens/sec
-$$
-
-$$
-Spike\ rate
+Spike\ rate\ (Energy\ Estimation)
 $$
 
 ---
@@ -113,22 +104,22 @@ Hipotesis dibuat sederhana.
 ### H1
 
 $$
-BLEU(SNN)>0
+BLEU(Dense\ SNN)>0
 $$
 
-dan model mampu mempelajari mapping source-target secara meaningful.
+dan model *baseline* mampu mempelajari mapping source-target secara stabil dengan bantuan teknik normalisasi SNN (tdBN).
 
 ### H2
 
 $$
 \boxed{
-BLEU(SNN+N\text{-}gram)
+BLEU(Spiking\text{-}MoE)
 >
-BLEU(SNN)
+BLEU(Dense\ SNN)
 }
 $$
 
-dengan parameter neural yang relatif sama.
+di mana performa *Spiking-MoE* mengalahkan *Dense SNN* ketika keduanya memiliki *Active Parameters* (jumlah parameter yang aktif di komputasi setiap token) yang relatif sama, membuktikan bahwa penskalaan model via Spiking Router bekerja efektif.
 
 ### H3
 

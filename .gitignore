@@ -15,3 +15,4 @@ dataset/
 .DS_Store
 .vscode/
 .idea/
+*.tar.gz
