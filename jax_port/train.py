@@ -11,7 +11,7 @@ from snn_core import (
 
 # Hyperparameters
 K = 20 # Neural timesteps
-beta_seq = 0.5
+beta_seq = 0.1
 learning_rate = 0.01
 batch_size = 32
 max_samples = 99000 # Sisakan 1000 terakhir (99k-100k) untuk test set
