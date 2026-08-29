@@ -11,7 +11,7 @@ from snn_core import (
 
 # Hyperparameters
 K = 5 # Neural timesteps
-beta_seq = 0.1
+beta_seq = 0.9
 learning_rate = 0.01
 batch_size = 32
 max_samples = 99000 # Sisakan 1000 terakhir (99k-100k) untuk test set
@@ -25,7 +25,7 @@ margin = 1.0
 def init_params(d_in_src, d_in_tgt):
     key = jax.random.PRNGKey(42)
     def uniform(k, shape):
-        return jax.random.uniform(k, shape, minval=-0.5, maxval=0.5) * 0.1
+        return jax.random.uniform(k, shape, minval=-0.5, maxval=0.5)
         
     keys = jax.random.split(key, 10)
     params = {

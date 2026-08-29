@@ -43,27 +43,27 @@ def precompute_all_sdr(vocab_size, d_d, num_active=3):
     return jnp.array(m_v_all)
 
 # Encoder Step
-def encoder_step(u_e, s_e_prev, s_x, w_e, w_r, beta_seq, threshold=0.3):
+def encoder_step(u_e, s_e_prev, s_x, w_e, w_r, beta_seq, threshold=0.1):
     u = u_e * beta_seq + jnp.dot(s_x, w_e.T) + jnp.dot(s_e_prev, w_r.T)
     s = spike_fn(u, threshold)
     u = u - s * threshold # Soft reset (differentiable)
     return u, s
 
 # STCM Step
-def stcm_encoder_step(u_c, s_c_prev, s_e, w_ce, w_cc, beta_seq, threshold=0.3):
+def stcm_encoder_step(u_c, s_c_prev, s_e, w_ce, w_cc, beta_seq, threshold=0.1):
     u = u_c * beta_seq + jnp.dot(s_e, w_ce.T) + jnp.dot(s_c_prev, w_cc.T)
     s = spike_fn(u, threshold)
     u = u - s * threshold
     return u, s
 
-def stcm_decoder_step(u_c, s_c_prev, s_d, w_ctx, w_self, beta_seq, threshold=0.3):
+def stcm_decoder_step(u_c, s_c_prev, s_d, w_ctx, w_self, beta_seq, threshold=0.1):
     u = u_c * beta_seq + jnp.dot(s_d, w_ctx.T) + jnp.dot(s_c_prev, w_self.T)
     s = spike_fn(u, threshold)
     u = u - s * threshold
     return u, s
 
 # Decoder Step
-def decoder_step(u_d, s_d_prev, s_y, s_ctx, w_y, w_c, w_r, beta_seq, threshold=0.3):
+def decoder_step(u_d, s_d_prev, s_y, s_ctx, w_y, w_c, w_r, beta_seq, threshold=0.1):
     u = u_d * beta_seq + jnp.dot(s_y, w_y.T) + jnp.dot(s_ctx, w_c.T) + jnp.dot(s_d_prev, w_r.T)
     s = spike_fn(u, threshold)
     u = u - s * threshold

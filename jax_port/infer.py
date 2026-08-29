@@ -10,7 +10,7 @@ from snn_core import (
 
 # Hyperparameters (must match train.py)
 K = 5
-beta_seq = 0.1
+beta_seq = 0.9
 d_e = 64
 d_c = 128
 d_d = 128
