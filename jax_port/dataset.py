@@ -27,7 +27,7 @@ class StreamingCorpus:
     def decode(self, ids):
         return self.tokenizer.decode(ids)
         
-    def stream_batches(self, batch_size, limit):
+    def stream_batches(self, batch_size, limit, max_seq_len=64):
         eos_id = self.get_eos_id()
         with open(self.src_path, 'r', encoding='utf-8') as src_file, \
              open(self.tgt_path, 'r', encoding='utf-8') as tgt_file:
@@ -41,18 +41,20 @@ class StreamingCorpus:
                 src_ids = self.encode(src_line) + [eos_id]
                 tgt_ids = self.encode(tgt_line) + [eos_id]
                 
+                # Truncate if too long
+                src_ids = src_ids[:max_seq_len]
+                tgt_ids = tgt_ids[:max_seq_len]
+                
                 sources.append(src_ids)
                 targets.append(tgt_ids)
                 lines_read += 1
                 
                 if len(sources) == batch_size:
-                    # Pad sequences to max length in batch
-                    max_len_src = max(len(s) for s in sources)
-                    max_len_tgt = max(len(t) for t in targets)
+                    # Pad sequences to a STATIC max_seq_len for JAX JIT
                     pad_id = self.get_pad_id()
                     
-                    src_padded = np.array([s + [pad_id]*(max_len_src - len(s)) for s in sources], dtype=np.int32)
-                    tgt_padded = np.array([t + [pad_id]*(max_len_tgt - len(t)) for t in targets], dtype=np.int32)
+                    src_padded = np.array([s + [pad_id]*(max_seq_len - len(s)) for s in sources], dtype=np.int32)
+                    tgt_padded = np.array([t + [pad_id]*(max_seq_len - len(t)) for t in targets], dtype=np.int32)
                     
                     yield src_padded, tgt_padded
                     sources, targets = [], []
