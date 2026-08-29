@@ -30,14 +30,14 @@ def init_params(d_in_src, d_in_tgt):
     keys = jax.random.split(key, 10)
     params = {
         'enc_w_e': uniform(keys[0], (d_e, d_in_src)),
-        'enc_w_r': uniform(keys[1], (d_e, d_e)) + jnp.eye(d_e) * 0.9,
+        'enc_w_r': uniform(keys[1], (d_e, d_e)),
         'stcm_w_ce': uniform(keys[2], (d_c, d_e)),
-        'stcm_w_cc': uniform(keys[3], (d_c, d_c)) + jnp.eye(d_c) * 0.9,
+        'stcm_w_cc': uniform(keys[3], (d_c, d_c)),
         'stcm_w_ctx': uniform(keys[4], (d_c, d_d)),
-        'stcm_w_self': uniform(keys[5], (d_c, d_c)) + jnp.eye(d_c) * 0.9,
+        'stcm_w_self': uniform(keys[5], (d_c, d_c)),
         'dec_w_y': uniform(keys[6], (d_d, d_in_tgt)),
         'dec_w_c': uniform(keys[7], (d_d, d_c)),
-        'dec_w_r': uniform(keys[8], (d_d, d_d)) + jnp.eye(d_d) * 0.9
+        'dec_w_r': uniform(keys[8], (d_d, d_d))
     }
     return params
 
@@ -58,22 +58,31 @@ def forward_pass(params, src_batch, tgt_batch, m_v_all):
     # --- ENCODER PHASE ---
     def encode_scan(carry, x_t):
         u_e, s_e_prev, u_c, s_c_prev = carry
-        # x_t: (B,)
-        # One-hot representation inside the scan
-        s_x = jax.nn.one_hot(x_t, params['enc_w_e'].shape[1]) # (B, vocab_src)
+        s_x = jax.nn.one_hot(x_t, params['enc_w_e'].shape[1])
         
         s_e_new = []
         s_c_new = []
+        u_e_next, u_c_next = u_e, u_c
+        s_e_prev_next, s_c_prev_next = s_e_prev, s_c_prev
         
         for tau in range(K):
-            u_e, s_e_tau = encoder_step(u_e, s_e_prev[:, tau], s_x, params['enc_w_e'], params['enc_w_r'], beta_seq)
-            u_c, s_c_tau = stcm_encoder_step(u_c, s_c_prev[:, tau], s_e_tau, params['stcm_w_ce'], params['stcm_w_cc'], beta_seq)
+            u_e_next, s_e_tau = encoder_step(u_e_next, s_e_prev_next[:, tau], s_x, params['enc_w_e'], params['enc_w_r'], beta_seq)
+            u_c_next, s_c_tau = stcm_encoder_step(u_c_next, s_c_prev_next[:, tau], s_e_tau, params['stcm_w_ce'], params['stcm_w_cc'], beta_seq)
             s_e_new.append(s_e_tau)
             s_c_new.append(s_c_tau)
             
-        s_e_prev = jnp.stack(s_e_new, axis=1) # (B, K, d_e)
-        s_c_prev = jnp.stack(s_c_new, axis=1) # (B, K, d_c)
-        return (u_e, s_e_prev, u_c, s_c_prev), None
+        s_e_new_stack = jnp.stack(s_e_new, axis=1)
+        s_c_new_stack = jnp.stack(s_c_new, axis=1)
+        
+        is_valid = (x_t != 0).reshape(-1, 1)
+        is_valid_s = is_valid.reshape(-1, 1, 1)
+        
+        u_e_final = jnp.where(is_valid, u_e_next, u_e)
+        u_c_final = jnp.where(is_valid, u_c_next, u_c)
+        s_e_final = jnp.where(is_valid_s, s_e_new_stack, s_e_prev)
+        s_c_final = jnp.where(is_valid_s, s_c_new_stack, s_c_prev)
+        
+        return (u_e_final, s_e_final, u_c_final, s_c_final), None
 
     # Scan over source tokens
     src_batch_T = jnp.swapaxes(src_batch, 0, 1) # (T_src, B)
@@ -141,13 +150,35 @@ def forward_pass(params, src_batch, tgt_batch, m_v_all):
     _, losses = jax.lax.scan(decode_scan, (u_c_ctx, s_c_ctx, u_d, s_d_prev), (tgt_inputs_T, tgt_true_T))
     return jnp.sum(losses) / B
 
-@functools.partial(jax.pmap, axis_name='batch', in_axes=(0, 0, 0, None))
-def update(params, src_batch, tgt_batch, m_v_all):
+@functools.partial(jax.pmap, axis_name='batch', in_axes=(0, 0, 0, None, 0, 0, None))
+def update(params, src_batch, tgt_batch, m_v_all, m, v, t):
     loss, grads = jax.value_and_grad(forward_pass)(params, src_batch, tgt_batch, m_v_all)
     grads = jax.lax.pmean(grads, axis_name='batch')
     loss = jax.lax.pmean(loss, axis_name='batch')
-    new_params = jax.tree_util.tree_map(lambda p, g: p - learning_rate * g, params, grads)
-    return new_params, loss
+    
+    beta1 = 0.9
+    beta2 = 0.999
+    eps = 1e-8
+    
+    def apply_adam(p, g, m_i, v_i):
+        m_new = beta1 * m_i + (1 - beta1) * g
+        v_new = beta2 * v_i + (1 - beta2) * jnp.square(g)
+        m_hat = m_new / (1 - beta1 ** t)
+        v_hat = v_new / (1 - beta2 ** t)
+        p_new = p - learning_rate * m_hat / (jnp.sqrt(v_hat) + eps)
+        return p_new, m_new, v_new
+
+    new_params = {}
+    new_m = {}
+    new_v = {}
+    
+    for k in params.keys():
+        p_new, m_new, v_new = apply_adam(params[k], grads[k], m[k], v[k])
+        new_params[k] = p_new
+        new_m[k] = m_new
+        new_v[k] = v_new
+        
+    return new_params, loss, new_m, new_v
 
 def main():
     print("Mulai Pelatihan SNN (JAX Port)...")
@@ -159,8 +190,13 @@ def main():
     vocab_tgt = corpus.vocab_size()
     
     params = init_params(vocab_src, vocab_tgt)
+    m = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), params)
+    v = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), params)
+    
     # Duplikasi parameter ke memori setiap GPU
     params = jax.tree_util.tree_map(lambda x: jnp.stack([x] * num_devices), params)
+    m = jax.tree_util.tree_map(lambda x: jnp.stack([x] * num_devices), m)
+    v = jax.tree_util.tree_map(lambda x: jnp.stack([x] * num_devices), v)
     
     m_v_all = precompute_all_sdr(vocab_tgt, d_d, num_active_sdr)
     
@@ -179,9 +215,11 @@ def main():
             src_batch = src_batch.reshape(num_devices, batch_size // num_devices, -1)
             tgt_batch = tgt_batch.reshape(num_devices, batch_size // num_devices, -1)
             
-            params, loss = update(params, src_batch, tgt_batch, m_v_all)
-            total_loss += float(jnp.mean(loss))
             steps += 1
+            t = jnp.array([steps] * num_devices, dtype=jnp.float32)
+            params, loss, m, v = update(params, src_batch, tgt_batch, m_v_all, m, v, t)
+            
+            total_loss += float(jnp.mean(loss))
             pbar.set_postfix({"Loss": f"{total_loss/steps:.4f}"})
 
         # Save checkpoint (hanya simpan versi GPU 0 agar tidak redundant)

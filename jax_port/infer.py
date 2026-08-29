@@ -28,12 +28,27 @@ def encode_batch(params, src_batch, K_len):
         u_e, s_e_prev, u_c, s_c_prev = carry
         s_x = jax.nn.one_hot(x_t, params['enc_w_e'].shape[1])
         s_e_new, s_c_new = [], []
+        u_e_next, u_c_next = u_e, u_c
+        s_e_prev_next, s_c_prev_next = s_e_prev, s_c_prev
+        
         for tau in range(K_len):
-            u_e, s_e_tau = encoder_step(u_e, s_e_prev[:, tau], s_x, params['enc_w_e'], params['enc_w_r'], beta_seq)
-            u_c, s_c_tau = stcm_encoder_step(u_c, s_c_prev[:, tau], s_e_tau, params['stcm_w_ce'], params['stcm_w_cc'], beta_seq)
+            u_e_next, s_e_tau = encoder_step(u_e_next, s_e_prev_next[:, tau], s_x, params['enc_w_e'], params['enc_w_r'], beta_seq)
+            u_c_next, s_c_tau = stcm_encoder_step(u_c_next, s_c_prev_next[:, tau], s_e_tau, params['stcm_w_ce'], params['stcm_w_cc'], beta_seq)
             s_e_new.append(s_e_tau)
             s_c_new.append(s_c_tau)
-        return (u_e, jnp.stack(s_e_new, axis=1), u_c, jnp.stack(s_c_new, axis=1)), None
+            
+        s_e_new_stack = jnp.stack(s_e_new, axis=1)
+        s_c_new_stack = jnp.stack(s_c_new, axis=1)
+        
+        is_valid = (x_t != 0).reshape(-1, 1)
+        is_valid_s = is_valid.reshape(-1, 1, 1)
+        
+        u_e_final = jnp.where(is_valid, u_e_next, u_e)
+        u_c_final = jnp.where(is_valid, u_c_next, u_c)
+        s_e_final = jnp.where(is_valid_s, s_e_new_stack, s_e_prev)
+        s_c_final = jnp.where(is_valid_s, s_c_new_stack, s_c_prev)
+        
+        return (u_e_final, s_e_final, u_c_final, s_c_final), None
 
     src_batch_T = jnp.swapaxes(src_batch, 0, 1)
     (u_e, s_e_prev, u_c_ctx, s_c_ctx), _ = jax.lax.scan(encode_scan, (u_e, s_e_prev, u_c, s_c_prev), src_batch_T)
