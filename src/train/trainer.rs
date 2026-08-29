@@ -45,7 +45,7 @@ pub fn run_training_loop(corpus: &StreamingCorpus) {
     let beta_seq = 0.1;
     let learning_rate = 0.01;
     let batch_size = 32;
-    let max_samples = 75_000; // Seluruh corpus 75k baris
+    let max_samples = 99_000; // Selaras dengan JAX (99k train, 1k test)
     
     // Inisiasi Arsitektur Penuh
     let dist_in = Uniform::new(-0.5, 0.5);
