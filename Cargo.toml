@@ -1,0 +1,23 @@
+[package]
+name = "spiking_translation"
+version = "0.1.0"
+edition = "2021"
+authors = ["Akhyar"]
+
+[dependencies]
+# Untuk operasi multidimensi tensor/matrix (mirip NumPy/PyTorch tensor dasar)
+ndarray = { version = "0.15.6", features = ["serde"] }
+# Untuk inisialisasi bobot (random)
+rand = "0.8.5"
+# Untuk manipulasi tensor yang lebih kompleks jika diperlukan di ndarray
+ndarray-rand = "0.14.0"
+# Paralelisasi multi-threading untuk evaluasi CPU
+rayon = "1.8.1"
+indicatif = "0.18.6"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokenizers = "0.23.1"
+
+[profile.release]
+opt-level = 3
+lto = true

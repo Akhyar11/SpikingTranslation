@@ -1,0 +1,17 @@
+# Rust
+target/
+Cargo.lock
+
+# Python / JAX
+__pycache__/
+*.pyc
+*.npz
+
+# Datasets & Large Files
+dataset/
+*.zip
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
