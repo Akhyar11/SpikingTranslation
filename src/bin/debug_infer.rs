@@ -180,8 +180,8 @@ fn main() {
     let file = File::open("best_model.json").expect("File best_model.json tidak ditemukan!");
     let checkpoint: SpikingCheckpoint = serde_json::from_reader(file).expect("Parsing gagal");
     
-    let lif_params = LifParameters::new(0.9, 1.0, 1.0);
-    let beta_seq = 0.5;
+    let lif_params = LifParameters::new(0.9, 0.3, 1.0);
+    let beta_seq = 0.1;
     
     let encoder = SpikingEncoder::new(checkpoint.enc_w_e, checkpoint.enc_w_r, lif_params.clone(), beta_seq);
     let stcm = STCM::new(checkpoint.stcm_w_ce, checkpoint.stcm_w_cc, checkpoint.stcm_w_ctx, checkpoint.stcm_w_self, lif_params.clone(), beta_seq);

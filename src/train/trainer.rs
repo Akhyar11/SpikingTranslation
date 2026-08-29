@@ -41,8 +41,8 @@ pub fn run_training_loop(corpus: &StreamingCorpus) {
     let d_c = 128;
     let d_d = 128;
 
-    let lif = LifParameters::new(0.9, 1.0, 1.0);
-    let beta_seq = 0.5;
+    let lif = LifParameters::new(0.9, 0.3, 1.0);
+    let beta_seq = 0.1;
     let learning_rate = 0.01;
     let batch_size = 32;
     let max_samples = 75_000; // Seluruh corpus 75k baris

@@ -211,7 +211,7 @@ mod tests {
         let d_c = 48;
         let d_d = 64;
 
-        let lif = LifParameters::new(0.9, 1.0, 1.0);
+        let lif = LifParameters::new(0.9, 0.3, 1.0);
         
         let encoder = SpikingEncoder::new(
             Array2::zeros((d_e, d_in)), 
