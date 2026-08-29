@@ -42,7 +42,7 @@ fn debug_infer(
     corpus: &StreamingCorpus,
     ngram_memory: &SparseNGramMemory,
 ) {
-    let k = 20; // neural timesteps
+    let k = 5; // neural timesteps
     let max_len = 5; // Batasi 5 kata saja agar log tidak terlalu panjang
     
     println!("\n=======================================================");

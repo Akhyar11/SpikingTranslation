@@ -10,7 +10,7 @@ from snn_core import (
 )
 
 # Hyperparameters
-K = 20 # Neural timesteps
+K = 5 # Neural timesteps
 beta_seq = 0.1
 learning_rate = 0.01
 batch_size = 32
