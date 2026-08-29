@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import functools
 from tqdm import tqdm
 from dataset import StreamingCorpus
 from snn_core import (
@@ -140,19 +141,27 @@ def forward_pass(params, src_batch, tgt_batch, m_v_all):
     _, losses = jax.lax.scan(decode_scan, (u_c_ctx, s_c_ctx, u_d, s_d_prev), (tgt_inputs_T, tgt_true_T))
     return jnp.sum(losses) / B
 
-@jax.jit
+@functools.partial(jax.pmap, axis_name='batch', in_axes=(0, 0, 0, None))
 def update(params, src_batch, tgt_batch, m_v_all):
     loss, grads = jax.value_and_grad(forward_pass)(params, src_batch, tgt_batch, m_v_all)
+    grads = jax.lax.pmean(grads, axis_name='batch')
+    loss = jax.lax.pmean(loss, axis_name='batch')
     new_params = jax.tree_util.tree_map(lambda p, g: p - learning_rate * g, params, grads)
     return new_params, loss
 
 def main():
     print("Mulai Pelatihan SNN (JAX Port)...")
+    num_devices = jax.local_device_count()
+    print(f"Ditemukan {num_devices} device(s) JAX. Menggunakan Data Parallelism (@jax.pmap).")
+    
     corpus = StreamingCorpus("../dataset/OpenSubtitles.en-id.en", "../dataset/OpenSubtitles.en-id.id")
     vocab_src = corpus.vocab_size()
     vocab_tgt = corpus.vocab_size()
     
     params = init_params(vocab_src, vocab_tgt)
+    # Duplikasi parameter ke memori setiap GPU
+    params = jax.tree_util.tree_map(lambda x: jnp.stack([x] * num_devices), params)
+    
     m_v_all = precompute_all_sdr(vocab_tgt, d_d, num_active_sdr)
     
     for epoch in range(1, epochs + 1):
@@ -163,13 +172,21 @@ def main():
         
         pbar = tqdm(batch_iter, total=max_samples//batch_size)
         for src_batch, tgt_batch in pbar:
+            # Pastikan bisa dibagi rata ke semua GPU
+            if batch_size % num_devices != 0:
+                raise ValueError("Batch size harus habis dibagi jumlah GPU!")
+                
+            src_batch = src_batch.reshape(num_devices, batch_size // num_devices, -1)
+            tgt_batch = tgt_batch.reshape(num_devices, batch_size // num_devices, -1)
+            
             params, loss = update(params, src_batch, tgt_batch, m_v_all)
-            total_loss += float(loss)
+            total_loss += float(jnp.mean(loss))
             steps += 1
             pbar.set_postfix({"Loss": f"{total_loss/steps:.4f}"})
 
-        # Save checkpoint
-        np.savez("best_model_jax.npz", **params)
+        # Save checkpoint (hanya simpan versi GPU 0 agar tidak redundant)
+        saved_params = jax.tree_util.tree_map(lambda x: x[0], params)
+        np.savez("best_model_jax.npz", **saved_params)
         print(f"Epoch {epoch} selesai. Checkpoint disimpan ke best_model_jax.npz")
 
 if __name__ == "__main__":
