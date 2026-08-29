@@ -54,9 +54,13 @@ def decode_step_jax(params, current_tokens, u_c_ctx, s_c_ctx, u_d, s_d_prev, K_l
     s_d_prev = jnp.stack(s_d_new, axis=1)
 
     s_d_sum = jnp.sum(s_d_prev, axis=1)
-    def calc_scores(batch_s_d_sum):
-        return jnp.sum(batch_s_d_sum[m_v_all], axis=1)
-    scores = jax.vmap(calc_scores)(s_d_sum)
+    
+    def calc_scores(batch_s, batch_u):
+        spike_score = jnp.sum(batch_s[m_v_all], axis=1)
+        volt_score = jnp.sum(batch_u[m_v_all], axis=1) * 0.05
+        return spike_score + volt_score
+        
+    scores = jax.vmap(calc_scores)(s_d_sum, u_d)
     return u_c_ctx, s_c_ctx, u_d, s_d_prev, scores
 
 def infer(params, src_batch, max_len, m_v_all, ngram_mem=None):

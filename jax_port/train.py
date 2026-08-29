@@ -113,13 +113,13 @@ def forward_pass(params, src_batch, tgt_batch, m_v_all):
         # We need to compute score for all candidates: sum of spikes over K for the mapped neurons
         s_d_sum = jnp.sum(s_d_t, axis=1) # (B, d_d)
         
-        # score for token v: sum(s_d_sum[m_v_all[v]])
-        # We can vmap this or use advanced indexing
-        def calc_scores(batch_s_d_sum):
-            # batch_s_d_sum: (d_d,)
-            return jnp.sum(batch_s_d_sum[m_v_all], axis=1) # (vocab_tgt,)
+        # Add sub-threshold voltage (u_d) as a continuous tie-breaker and direct gradient path
+        def calc_scores(batch_s, batch_u):
+            spike_score = jnp.sum(batch_s[m_v_all], axis=1)
+            volt_score = jnp.sum(batch_u[m_v_all], axis=1) * 0.05
+            return spike_score + volt_score
             
-        scores = jax.vmap(calc_scores)(s_d_sum) # (B, vocab_tgt)
+        scores = jax.vmap(calc_scores)(s_d_sum, u_d) # (B, vocab_tgt)
         
         # a_plus (target score)
         a_plus = jnp.take_along_axis(scores, jnp.expand_dims(y_true, 1), axis=1).squeeze(1) # (B,)
