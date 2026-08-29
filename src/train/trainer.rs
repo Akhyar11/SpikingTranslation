@@ -119,10 +119,23 @@ pub fn run_training_loop(corpus: &StreamingCorpus) {
             }
             total_loss += batch_loss / src_batch.len() as f32;
             
-            // SGD UPDATE
-            decoder.w_y -= &(&batch_grads.d_wy * learning_rate);
-            decoder.w_c -= &(&batch_grads.d_wc * learning_rate);
-            decoder.w_r -= &(&batch_grads.d_wr_dec * learning_rate);
+            // SGD UPDATE (Full Network & Batch Averaged)
+            let lr_eff = learning_rate / src_batch.len() as f32;
+            
+            // 1. Update Encoder
+            encoder.w_e -= &(&batch_grads.d_we * lr_eff);
+            encoder.w_r -= &(&batch_grads.d_wr_enc * lr_eff);
+            
+            // 2. Update STCM
+            stcm.w_ce -= &(&batch_grads.d_wce * lr_eff);
+            stcm.w_cc -= &(&batch_grads.d_wcc * lr_eff);
+            stcm.w_ctx -= &(&batch_grads.d_wctx * lr_eff);
+            stcm.w_self -= &(&batch_grads.d_wself * lr_eff);
+            
+            // 3. Update Decoder
+            decoder.w_y -= &(&batch_grads.d_wy * lr_eff);
+            decoder.w_c -= &(&batch_grads.d_wc * lr_eff);
+            decoder.w_r -= &(&batch_grads.d_wr_dec * lr_eff);
             
             batches_processed += 1;
             pb.set_message(format!("{:.4}", total_loss / batches_processed as f32));
