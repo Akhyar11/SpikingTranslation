@@ -11,7 +11,7 @@ import sacrebleu
 
 def main():
     print("Memuat Vocabulary...")
-    corpus = StreamingCorpus("../dataset/OpenSubtitles.en-id.en", "../dataset/OpenSubtitles.en-id.id")
+    corpus = StreamingCorpus()
     vocab_src = corpus.vocab_size()
     vocab_tgt = corpus.vocab_size()
     

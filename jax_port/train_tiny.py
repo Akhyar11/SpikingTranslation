@@ -49,7 +49,7 @@ def main():
     print("Mulai Pelatihan SNN Tiny (Overfitting Test dengan Adam)...")
     num_devices = jax.local_device_count()
     
-    corpus = StreamingCorpus("../dataset/OpenSubtitles.en-id.en", "../dataset/OpenSubtitles.en-id.id")
+    corpus = StreamingCorpus()
     vocab_src = corpus.vocab_size()
     vocab_tgt = corpus.vocab_size()
     

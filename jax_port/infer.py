@@ -130,7 +130,7 @@ def infer(params, src_batch, max_len=64, m_v_all=None):
 
 def main():
     print("Memuat Vocabulary...")
-    corpus = StreamingCorpus("../dataset/OpenSubtitles.en-id.en", "../dataset/OpenSubtitles.en-id.id")
+    corpus = StreamingCorpus()
     vocab_tgt = corpus.vocab_size()
     
     print("Memuat Checkpoint Model...")

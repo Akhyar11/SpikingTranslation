@@ -1,10 +1,27 @@
 import json
 import numpy as np
 from tokenizers import Tokenizer
+import os
+
+def get_tokenizer_path(path=None):
+    if path and os.path.exists(path): return path
+    kaggle_path = "/kaggle/input/datasets/akhyarsafrudin/dataset/bpe_tokenizer.json"
+    local_path = "../bpe_tokenizer.json"
+    return kaggle_path if os.path.exists(kaggle_path) else local_path
 
 class StreamingCorpus:
-    def __init__(self, src_path, tgt_path, tokenizer_path="../bpe_tokenizer.json"):
-        self.tokenizer = Tokenizer.from_file(tokenizer_path)
+    def __init__(self, src_path=None, tgt_path=None, tokenizer_path=None):
+        if src_path is None or not os.path.exists(src_path):
+            kaggle_src = "/kaggle/input/datasets/akhyarsafrudin/dataset/dataset/OpenSubtitles.en-id.en"
+            local_src = "../dataset/OpenSubtitles.en-id.en"
+            src_path = kaggle_src if os.path.exists(kaggle_src) else local_src
+            
+        if tgt_path is None or not os.path.exists(tgt_path):
+            kaggle_tgt = "/kaggle/input/datasets/akhyarsafrudin/dataset/dataset/OpenSubtitles.en-id.id"
+            local_tgt = "../dataset/OpenSubtitles.en-id.id"
+            tgt_path = kaggle_tgt if os.path.exists(kaggle_tgt) else local_tgt
+            
+        self.tokenizer = Tokenizer.from_file(get_tokenizer_path(tokenizer_path))
         self.src_path = src_path
         self.tgt_path = tgt_path
         
