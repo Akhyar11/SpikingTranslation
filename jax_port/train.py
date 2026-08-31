@@ -97,7 +97,10 @@ def forward_pass(params, src_batch, tgt_batch, m_v_all):
         # Accumulate spikes to select expert
         s_router_stack = jnp.stack(s_router_new, axis=1) # (B, K, E)
         R_e = jnp.sum(s_router_stack, axis=1) # (B, E)
-        expert_id = jnp.argmax(R_e, axis=1) # (B,)
+        
+        # Tie-breaker (voltage sub-threshold) to prevent integer argmax index 0 collapse
+        router_score = R_e + u_router_next * 0.01
+        expert_id = jnp.argmax(router_score, axis=1) # (B,)
         
         w1_expert = params['exp_w1'][expert_id] # (B, d_hidden, d_e)
         w2_expert = params['exp_w2'][expert_id] # (B, d_e, d_hidden)

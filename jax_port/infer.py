@@ -41,7 +41,10 @@ def encode_batch(params, src_batch, K_len):
             
         s_router_stack = jnp.stack(s_router_new, axis=1)
         R_e = jnp.sum(s_router_stack, axis=1)
-        expert_id = jnp.argmax(R_e, axis=1)
+        
+        # Tie-breaker (voltage sub-threshold) to prevent integer argmax index 0 collapse
+        router_score = R_e + u_router_next * 0.01
+        expert_id = jnp.argmax(router_score, axis=1)
         
         w1_expert = params['exp_w1'][expert_id]
         w2_expert = params['exp_w2'][expert_id]
