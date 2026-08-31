@@ -126,12 +126,11 @@ def forward_pass(params, src_batch, tgt_batch, m_v_all):
         s_e_final = jnp.where(is_valid_s, s_e_new_stack, s_e_prev)
         s_c_final = jnp.where(is_valid_s, s_c_new_stack, s_c_prev)
         
-        # Phase 4: Load Balancing Loss
+        # Phase 4: CV-Squared Load Balancing Loss
         mean_router_spikes = jnp.mean(R_e, axis=0) # (E,)
-        # Mask out padding tokens from balance loss
-        # Since R_e has spikes even for padding if u_router decays, we should ideally mask it.
-        # But for simplicity, we just minimize the variance of the mean spikes across experts.
-        l_balance_t = jnp.var(mean_router_spikes)
+        mean_of_means = jnp.mean(mean_router_spikes)
+        var_of_means = jnp.var(mean_router_spikes)
+        l_balance_t = var_of_means / (jnp.square(mean_of_means) + 1e-5)
         # Apply mask
         l_balance_t = jnp.where(x_t != 0, l_balance_t, 0.0)
         
@@ -211,7 +210,7 @@ def forward_pass(params, src_batch, tgt_batch, m_v_all):
     _, losses = jax.lax.scan(decode_scan, (u_c_ctx, s_c_ctx, u_d, s_d_prev), (tgt_inputs_T, tgt_true_T))
     
     task_loss = jnp.sum(losses) / B
-    lambda_balance = 1.0
+    lambda_balance = 0.1
     lambda_activity = 0.5
     balance_loss = (total_l_balance / T_src) * lambda_balance
     activity_loss = (total_l_activity / T_src) * lambda_activity
